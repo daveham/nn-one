@@ -1,0 +1,13 @@
+[package]
+name = "nn-one"
+version = "0.1.0"
+authors = ["daveham"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+image = "0.23.14"
+nannou = "0.18.0"
+hdrhistogram = "7.4.0"
+text-colorizer = "1.0.0"
