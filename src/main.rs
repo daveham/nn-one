@@ -5,6 +5,7 @@ extern crate text_colorizer;
 
 use hdrhistogram::Histogram;
 use image::{DynamicImage, GenericImageView, SubImage};
+use nannou::color::named;
 use nannou::prelude::*;
 use text_colorizer::*;
 
@@ -134,26 +135,61 @@ fn model(app: &App) -> Model {
 //     app.set_loop_mode(LoopMode::loop_once());
 // }
 
+fn render_hist(draw: &Draw, data: &[u64], bounds: &Rect, bar_color: Rgb<u8>) {
+    // draw background
+    draw.rect()
+        .xy(bounds.xy())
+        .wh(bounds.wh())
+        .color(named::GAINSBORO);
+
+    // draw border around background
+    let border_width = 2.0;
+    let border_rect = Rect::from_xy_wh(bounds.xy(), bounds.wh() + border_width);
+    let border_corner_points: Vec<_> = border_rect
+        .corners_iter()
+        .map(|c: [f32; 2]| (pt2(c[0], c[1]), named::DARKGRAY))
+        .collect();
+    draw.polyline()
+        .weight(border_width)
+        .points_colored_closed(border_corner_points);
+
+    // draw bars
+    let mut bar_x_offset = 0.0f32;
+    let bar_height_scale_down_by = 8.0f32;
+    let bar_width = 7.0f32;
+    let bar_spacing = 8.0f32;
+    for v in data {
+        let mut height = *v as f32 / bar_height_scale_down_by;
+        // boost a non-zero value so it is clearly visible as non-zero
+        if height > 0f32 {
+            height = height + 1.0f32;
+        }
+        let bar = Rect::from_w_h(bar_width, height)
+            .bottom_left_of(*bounds)
+            .shift_x(bar_x_offset);
+        draw.rect().xy(bar.xy()).wh(bar.wh()).color(bar_color);
+        bar_x_offset = bar_x_offset + bar_spacing;
+    }
+}
+
 fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
-    draw.background().color(BLUE);
+    draw.background().color(WHEAT);
 
-    draw.ellipse()
-        .x_y(0.0, 0.0)
-        .w_h(200.0, 200.0)
-        .color(STEELBLUE);
+    let padding = 10f32;
 
-    let r = Rect::from_w_h(100.0f32, 100.0f32);
+    let win = app.window_rect().pad(padding);
+    let r_bounds = Rect::from_w_h(128.0f32, 128.0f32).top_left_of(win);
 
-    draw.rect()
-        .xy(r.xy())
-        .wh(r.wh())
-        .z_degrees(45.0)
-        .color(PLUM);
+    render_hist(&draw, &model.values.0, &r_bounds, RED);
 
-    let r2 = r.below(r).shift_y(-50.0);
+    let g_bounds = r_bounds.right_of(r_bounds).shift_x(padding);
 
-    draw.ellipse().xy(r2.xy()).wh(r2.wh()).color(SALMON);
+    render_hist(&draw, &model.values.1, &g_bounds, GREEN);
+
+    let b_bounds = g_bounds.right_of(g_bounds).shift_x(padding);
+
+    render_hist(&draw, &model.values.2, &b_bounds, BLUE);
 
     draw.to_frame(app, &frame).unwrap();
 
