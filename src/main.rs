@@ -10,18 +10,106 @@ use nannou::prelude::*;
 use text_colorizer::*;
 
 fn main() {
-    nannou::app(model)
-        .loop_mode(LoopMode::NTimes {
-            number_of_updates: 1,
-        })
-        // .update(update)
-        .simple_window(view)
-        .run();
+    nannou::app(model).update(update).run();
+}
+// fn main() {
+//     nannou::app(model)
+//         .loop_mode(LoopMode::NTimes {
+//             number_of_updates: 1,
+//         })
+//         // .update(update)
+//         .simple_window(view)
+//         .run();
+// }
+
+struct SliceAnalysis {
+    hist: (Histogram<u32>, Histogram<u32>, Histogram<u32>),
+    values: (Vec<u64>, Vec<u64>, Vec<u64>),
+}
+
+impl SliceAnalysis {
+    fn new(img: &DynamicImage, bounds: &Rect) -> Self {
+        let slice = img.view(
+            bounds.left() as u32,
+            bounds.top() as u32,
+            bounds.w() as u32,
+            bounds.h() as u32,
+        );
+        println!(
+            "{} {:?}",
+            "slice dimensions: ".cyan().bold(),
+            slice.dimensions()
+        );
+
+        let hist = SliceAnalysis::build_data_from_slice(&slice);
+        let values = (
+            SliceAnalysis::get_values_from_hist(&hist.0),
+            SliceAnalysis::get_values_from_hist(&hist.1),
+            SliceAnalysis::get_values_from_hist(&hist.2),
+        );
+
+        SliceAnalysis { hist, values }
+    }
+
+    fn update(&mut self, img: &DynamicImage, bounds: &Rect) {
+        let slice = img.view(
+            bounds.left() as u32,
+            bounds.top() as u32,
+            bounds.w() as u32,
+            bounds.h() as u32,
+        );
+
+        self.hist = SliceAnalysis::build_data_from_slice(&slice);
+        self.values = (
+            SliceAnalysis::get_values_from_hist(&self.hist.0),
+            SliceAnalysis::get_values_from_hist(&self.hist.1),
+            SliceAnalysis::get_values_from_hist(&self.hist.2),
+        );
+    }
+
+    fn build_data_from_slice(
+        slice: &SubImage<&DynamicImage>,
+    ) -> (Histogram<u32>, Histogram<u32>, Histogram<u32>) {
+        let mut r = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
+        let mut g = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
+        let mut b = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
+
+        for (_x, _y, pixel) in slice.pixels() {
+            r.record(pixel[0] as u64 + 1).unwrap();
+            g.record(pixel[1] as u64 + 1).unwrap();
+            b.record(pixel[2] as u64 + 1).unwrap();
+        }
+
+        (r, g, b)
+    }
+
+    const PAD: [u64; 16] = [0; 16];
+
+    fn get_values_from_hist(hist: &Histogram<u32>) -> Vec<u64> {
+        let mut v: Vec<_> = hist
+            .iter_linear(16)
+            .map(|v| v.count_since_last_iteration())
+            .collect();
+        v.reserve_exact(16 - v.len());
+        assert_eq!(v.capacity() >= 16, true);
+        if v.len() < 16 {
+            // pad using extend method
+            v.extend_from_slice(&SliceAnalysis::PAD[v.len()..16]);
+            // pad using loop
+            // for _number in v.len()..16 {
+            //     v.push(0);
+            // }
+        }
+        v
+    }
 }
 
 struct Model {
-    hist: (Histogram<u32>, Histogram<u32>, Histogram<u32>),
-    values: (Vec<u64>, Vec<u64>, Vec<u64>),
+    counter: u32,
+    upstamp: f32,
+    bounds: Rect,
+    img: DynamicImage,
+    sa: SliceAnalysis,
 }
 
 fn print_hist(label: char, hist: &Histogram<u32>, data: &[u64]) {
@@ -64,43 +152,9 @@ fn print_hist(label: char, hist: &Histogram<u32>, data: &[u64]) {
     // }
 }
 
-fn build_data_from_slice(
-    slice: &SubImage<&DynamicImage>,
-) -> (Histogram<u32>, Histogram<u32>, Histogram<u32>) {
-    let mut r = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
-    let mut g = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
-    let mut b = Histogram::<u32>::new_with_bounds(1, 256, 1).unwrap();
-
-    for (_x, _y, pixel) in slice.pixels() {
-        r.record(pixel[0] as u64 + 1).unwrap();
-        g.record(pixel[1] as u64 + 1).unwrap();
-        b.record(pixel[2] as u64 + 1).unwrap();
-    }
-
-    (r, g, b)
-}
-
-const PAD: [u64; 16] = [0; 16];
-
-fn get_values_from_hist(hist: &Histogram<u32>) -> Vec<u64> {
-    let mut v: Vec<_> = hist
-        .iter_linear(16)
-        .map(|v| v.count_since_last_iteration())
-        .collect();
-    v.reserve_exact(16 - v.len());
-    assert_eq!(v.capacity() >= 16, true);
-    if v.len() < 16 {
-        // pad using extend method
-        v.extend_from_slice(&PAD[v.len()..16]);
-        // pad using loop
-        // for _number in v.len()..16 {
-        //     v.push(0);
-        // }
-    }
-    v
-}
-
 fn model(app: &App) -> Model {
+    app.new_window().size(800, 640).view(view).build().unwrap();
+
     let assets = app.assets_path().unwrap();
     let img_path = assets.join("images").join("BrightAndEarly.tif");
     let img = image::open(img_path).unwrap();
@@ -112,28 +166,43 @@ fn model(app: &App) -> Model {
     );
     println!("{} {:?}", "image color: ".cyan().bold(), img.color());
 
-    let slice = img.view(0, 0, 32, 32);
+    let bounds = Rect::from_x_y_w_h(16.0, 16.0, 32.0, 32.0);
 
-    println!(
-        "{} {:?}",
-        "slice dimensions: ".cyan().bold(),
-        slice.dimensions()
-    );
+    let sa = SliceAnalysis::new(&img, &bounds);
 
-    let hist = build_data_from_slice(&slice);
-    println!("slice after call to build is {:?}", slice.dimensions());
-    let values = (
-        get_values_from_hist(&hist.0),
-        get_values_from_hist(&hist.1),
-        get_values_from_hist(&hist.2),
-    );
-
-    Model { hist, values }
+    Model {
+        counter: 0,
+        upstamp: 0.0,
+        bounds,
+        img,
+        sa,
+    }
 }
 
-// fn update(app: &App, _model: &mut Model, _update: Update) {
-//     app.set_loop_mode(LoopMode::loop_once());
-// }
+fn update(app: &App, model: &mut Model, _update: Update) {
+    if app.time - model.upstamp > 0.25 {
+        model.upstamp = app.time;
+
+        model.counter = model.counter + 1;
+        // println!(
+        //     "time: {}, counter: {}, bounds: {:?}",
+        //     app.time, model.counter, model.bounds
+        // );
+
+        let limit_x = model.img.dimensions().0;
+        if model.bounds.right() + model.bounds.w() < limit_x as f32 {
+            model.bounds = model.bounds.shift_x(model.bounds.w());
+        } else {
+            model.bounds = Rect::from_x_y_w_h(16.0, 16.0, 32.0, 32.0);
+            println!(
+                "reset column back to 0 at {}:{}",
+                model.counter, model.upstamp
+            );
+        }
+
+        model.sa.update(&model.img, &model.bounds);
+    }
+}
 
 fn render_hist(draw: &Draw, data: &[u64], bounds: &Rect, bar_color: Rgb<u8>) {
     // draw background
@@ -181,19 +250,19 @@ fn view(app: &App, model: &Model, frame: Frame) {
     let win = app.window_rect().pad(padding);
     let r_bounds = Rect::from_w_h(128.0f32, 128.0f32).top_left_of(win);
 
-    render_hist(&draw, &model.values.0, &r_bounds, RED);
+    render_hist(&draw, &model.sa.values.0, &r_bounds, RED);
 
     let g_bounds = r_bounds.right_of(r_bounds).shift_x(padding);
 
-    render_hist(&draw, &model.values.1, &g_bounds, GREEN);
+    render_hist(&draw, &model.sa.values.1, &g_bounds, GREEN);
 
     let b_bounds = g_bounds.right_of(g_bounds).shift_x(padding);
 
-    render_hist(&draw, &model.values.2, &b_bounds, BLUE);
+    render_hist(&draw, &model.sa.values.2, &b_bounds, BLUE);
 
     draw.to_frame(app, &frame).unwrap();
 
-    print_hist('R', &model.hist.0, &model.values.0);
-    print_hist('G', &model.hist.1, &model.values.1);
-    print_hist('B', &model.hist.2, &model.values.2);
+    // print_hist('R', &model.sa.hist.0, &model.sa.values.0);
+    // print_hist('G', &model.sa.hist.1, &model.sa.values.1);
+    // print_hist('B', &model.sa.hist.2, &model.sa.values.2);
 }
